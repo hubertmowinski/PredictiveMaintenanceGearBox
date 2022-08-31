@@ -14,8 +14,11 @@ sns.set_style("whitegrid")
 import pyarrow.parquet as pq
 import pandas as pd
 import numpy as np
-from tsai.all import get_splits
+from tsai.all import *
 from tqdm import tqdm
+import pickle
+
+logging.basicConfig(level=logging.INFO)
 
 
 # from keras.models import save_model
@@ -55,10 +58,26 @@ def datetime_to_seconds(dt):
     return round(dt.microsecond * 1e-6 + dt.second + dt.minute * 60, 3)
 
 
+def range1(start, end):
+    return range(start, end+1)
+
+
+def save_list_to_file(filename, list):
+    with open(filename, "wb") as fp:
+        pickle.dump(list, fp)
+
+
+def list_from_file(filename):
+    with open(filename, "rb") as fp:
+        return pickle.load(fp)
 # In[20]:
 
 
 class Tacho:
+    #Using slots to speed up code
+    __slots__ = ('count_pulses', 'frequency', 'angular_velocity', 'name', 'column_name', 'resolution',
+                 'time_sample', 'improve_low_velocity_reconstruction', 'column_to_write')
+
     def __init__(self, name, resolution, time_sample, improve_low_velocity_reconstruction):
         self.count_pulses = 0
         self.frequency = 0
@@ -80,7 +99,9 @@ class Tacho:
         self.update_column_to_write()
 
     def update_column(self, sim_id):
-        self.count_pulses = 0
+        #Added 100 pulses at begin becouse at begin we dont know how much pulses "0" were before and it is possible that
+        # we will have velocity 3140 at begin and we want to avoid that
+        self.count_pulses = 100
         self.frequency = 0
         self.angular_velocity = 0
         self.column_to_write = []
@@ -118,11 +139,14 @@ def add_angular_velocity_calculated_from_pulses(simulation_data, number_of_colum
         Tacho('TachoLoadSchaft_', resolution, time_sample, improve_low_velocity_reconstruction)
     ]
 
-    for sim_id in range(1, int(simulation_data.shape[1] / number_of_columns_in_one_simulation)):
+    for sim_id in range1(1, int(simulation_data.shape[1] / number_of_columns_in_one_simulation)):
+        logger.debug(f"Converting tacho columns from impulses to angular velocity: sim id: {sim_id}")
         for tacho in tachos:
             tacho.update_column(sim_id)
             for sample_id in range(0, len(simulation_data)):
+                logger.debug(f"Converting tacho columns from impulses to angular velocity: sample id: {sample_id}")
                 tacho.calculation_for_sample(simulation_data[tacho.column_name][sample_id])
+
             simulation_data[tacho.column_name] = tacho.column_to_write
     return simulation_data
 
@@ -135,7 +159,7 @@ def simulation_data_time_to_float(simulation_data, number_of_columns_in_one_simu
     # dla jednej symulacji zajmuj number_of_columns_in_one_simulation kolumny dlatego dzielimy
     # przez liczbe kolumn i mamy liczbe symulacji
     temp_float_time = []
-    for sim_id in range(1, int(simulation_data.shape[1] / number_of_columns_in_one_simulation)):
+    for sim_id in range1(1, int(simulation_data.shape[1] / number_of_columns_in_one_simulation)):
         time_column_name = 'Time_' + str(sim_id)
         for time_id in range(0, len(simulation_data)):
             temp_float_time.append(datetime_to_seconds(simulation_data[time_column_name][time_id]))
@@ -148,7 +172,7 @@ def simulation_data_time_to_float(simulation_data, number_of_columns_in_one_simu
 
 
 def print_angular_velocity_tacho(tacho_name, angular_velocity_name, data, number_of_columns_in_one_simulation):
-    for sim_id in range(1, int(data.shape[1] / number_of_columns_in_one_simulation)):
+    for sim_id in range1(1, int(data.shape[1] / number_of_columns_in_one_simulation)):
         tacho_column_name = tacho_name + str(sim_id)
         angular_velocity_column_name = angular_velocity_name + str(sim_id)
         time_name = "Time_" + str(sim_id)
@@ -161,8 +185,9 @@ def print_angular_velocity_tacho(tacho_name, angular_velocity_name, data, number
         new_data = simulation_data_to_show.set_index(time_name)
 
         sns.lineplot(data=new_data)
-        plt.show(block=False)
+        plt.plot()
         # sns.lineplot(x = "Time_100", y = "TachoLoadSchaft_10", data = simulation_data_to_show)
+    plt.show()
 
 #         new_data.head()
 
@@ -171,14 +196,15 @@ def prepare_data_to_train(simulation_data, number_of_columns_in_one_simulation, 
     #This functions gets 2d X data, takes only essensial data and converts it to 3d
     X = []
     Y = fault_codes.iloc[:, -1].values.tolist()
-    for sim_id in range(1, int(simulation_data.shape[1] / number_of_columns_in_one_simulation)):
+    for sim_id in range1(1, int(simulation_data.shape[1] / number_of_columns_in_one_simulation)):
         column_names = ["Vibration_" + str(sim_id), "TachoDriveSchaftHigh_" + str(sim_id),
                         "TachoDriveSchaftLow_" + str(sim_id), "TachoLoadSchaft_" + str(sim_id),
                         "Gear_" + str(sim_id), "Torque_" + str(sim_id), "Brake_" + str(sim_id)
                         ]
-
+        X.append([])
         for column_id, column_name in enumerate(column_names):
-            X[sim_id][column_id] = simulation_data[column_name]
+            X[sim_id - 1].append([])
+            X[sim_id - 1][column_id].extend(simulation_data[column_name].tolist())
 
     return X, Y
 
@@ -186,29 +212,33 @@ def prepare_data_to_train(simulation_data, number_of_columns_in_one_simulation, 
 
 
 # Simulations crucial parameters to proper working of this script
+logger = logging.getLogger(__name__)
 number_of_simulations = 208
 number_of_columns_in_one_simulation = 11
 time_sample_for_data = 0.001
 resolution = 2
 big_data_file_name = 'BigData_16_09.parquet'
 fault_data_file_name = 'FaultCodes_16_09.csv'
+file_for_train_data = 'train_data'
+file_for_train_data_x = file_for_train_data + '_x'
+file_for_train_data_y = file_for_train_data + '_y'
 
 # In[21]:
 
-logging.info("Reading data:" + big_data_file_name)
+logger.info("Reading data:" + big_data_file_name)
 train_set = pq.read_pandas(big_data_file_name).to_pandas()
 train_set.head()
 
-logging.info("Converting time columns from data time to float")
+logger.info("Converting time columns from data time to float")
 train = simulation_data_time_to_float(train_set, number_of_columns_in_one_simulation)
-logging.info("Converting tacho columns from impulses to angular velocity")
+logger.info("Converting tacho columns from impulses to angular velocity")
 train = add_angular_velocity_calculated_from_pulses(train, number_of_columns_in_one_simulation, time_sample_for_data,
                                                     resolution)
-train.head()
+# train.head()
 
-# # In[15]:
-#
-#
+# In[15]:
+
+logger.info("Printing")
 # print_angular_velocity_tacho("TachoDriveSchaftLow_", "AngularVelocityDriveLow_", train,
 #                              number_of_columns_in_one_simulation)
 #
@@ -218,7 +248,7 @@ train.head()
 # print_angular_velocity_tacho("TachoLoadSchaft_", "AngularVelocityLoadSchaft_", train,
 #                              number_of_columns_in_one_simulation)
 
-logging.info("Reading fault data:" + big_data_file_name)
+logger.info("Reading fault data:" + big_data_file_name)
 fault_data = pd.read_csv(fault_data_file_name)
 
 # In[ ]:
@@ -226,6 +256,29 @@ fault_data = pd.read_csv(fault_data_file_name)
 
 with pd.option_context('display.max_rows', None, 'display.max_columns', None):  # more options can be specified also
     print(fault_data)
-logging.info("Reshape and prepare data to train")
+
+logger.info("Reshape and prepare data to train")
 X, Y = prepare_data_to_train(train, number_of_columns_in_one_simulation, fault_data)
+
+logger.info(f"Save lists with train data to files: {file_for_train_data_x}, {file_for_train_data_y}")
+save_list_to_file(file_for_train_data_x, X)
+save_list_to_file(file_for_train_data_y, Y)
+
+logger.info("Split data to train and valid")
 splits = get_splits(Y, valid_size=.2, stratify=True, random_state=23, shuffle=True)
+
+tfms  = [None, TSClassification()] # TSClassification == Categorize
+batch_tfms = TSStandardize()
+dls = get_ts_dls(X, Y, splits=splits, tfms=tfms, batch_tfms=batch_tfms, bs=[64, 128])
+dls.show_batch(sharey=True)
+learn = ts_learner(dls, metrics=accuracy)
+learn.lr_find()
+learn = ts_learner(dls, metrics=accuracy, cbs=ShowGraph())
+learn.fit_one_cycle(10, lr_max=1e-3)
+
+PATH = Path('./Multiclass.pkl')
+PATH.parent.mkdir(parents=True, exist_ok=True)
+learn.export(PATH)
+
+interp = ClassificationInterpretation.from_learner(learn)
+interp.plot_confusion_matrix()
