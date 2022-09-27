@@ -25,8 +25,11 @@ path = Path('data')
 if not os.path.exists(path): os.makedirs(path)
 
 logger.info("Create numpy array with X and Y")
-X_large = np.array(X)
+X_largest = np.array(X)
 y_large = np.array(Y)
+
+logger.info("")
+X_large = X_largest[:, :, ::100]
 
 logger.info("")
 X_large_zarr = zarr.open(path/'X_large.zarr', mode='w', shape=X_large.shape, dtype=X_large.dtype, chunks=(1, -1, -1)) # chunks=(1, -1, -1) == (1, None, None)
