@@ -38,10 +38,10 @@ idx = Gear.Time >= seconds(10);
 Gear = Gear(idx,:);
 Gear.Time = Gear.Time - Gear.Time(1);
 
-torque = data.torque{1};
-idx = torque.Time >= seconds(10);
-torque = torque(idx,:);
-torque.Time = torque.Time - torque.Time(1);
+Torque = data.Torque{1};
+idx = Torque.Time >= seconds(10);
+Torque = Torque(idx,:);
+Torque.Time = Torque.Time - Torque.Time(1);
 
 Brake = data.Brake{1};
 idx = Brake.Time >= seconds(10);
@@ -68,6 +68,6 @@ end
 FaultCode = sF+2*sV+4*sT; %A fault code to capture different fault conditions
 
 %Collect processed data into a table
-sData = table({Vibration},{Tacho},{AngularVelocity},{Gear},{torque},{Brake},sF,sV,sT,FaultCode, ...
-        'VariableNames',{'Vibration','Tacho','AngularVelocity','Gear','torque','Brake','SensorDrift','ShaftWear','ToothFault','FaultCode'});
+sData = table({Vibration},{Tacho},{AngularVelocity},{Gear},{Torque},{Brake},sF,sV,sT,FaultCode, ...
+        'VariableNames',{'Vibration','Tacho','AngularVelocity','Gear','Torque','Brake','SensorDrift','ShaftWear','ToothFault','FaultCode'});
 end
